@@ -43,6 +43,49 @@
   <div id="root"></div>
 </main>
 
+<!-- Firebase SDK (modular) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+  import {
+    getFirestore, collection, addDoc, getDocs,
+    doc, setDoc, query, where
+  } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
+
+  // Configuración Firebase (Spark)
+  const firebaseConfig = {
+    apiKey: "AIzaSyCWIbixEc3WRgZjbd5v3u-gQiwGC-QR-Yo",
+    authDomain: "customer-journey-builder-2583d.firebaseapp.com",
+    projectId: "customer-journey-builder-2583d",
+    storageBucket: "customer-journey-builder-2583d.firebasestorage.app",
+    messagingSenderId: "765018924860",
+    appId: "1:765018924860:web:ca0c1dcf8510538a706039",
+    measurementId: "G-ZMG2BEZXF3"
+  };
+
+  // Inicializar Firebase, Auth anónimo y Firestore
+  const app  = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  signInAnonymously(auth);
+  const db   = getFirestore(app);
+
+  // Helpers globales para guardar, cargar y actualizar journeys
+  window.saveJourney = async (user, stages) => {
+    await addDoc(collection(db, "journeys"), {
+      user,
+      createdAt: Date.now(),
+      stages
+    });
+  };
+  window.loadJourneys = async (user) => {
+    const snap = await getDocs(query(collection(db, "journeys"), where("user", "==", user)));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  };
+  window.updateJourney = async (id, stages) => {
+    await setDoc(doc(db, "journeys", id), { stages }, { merge: true });
+  };
+</script>
+
 <script type="text/babel">
 const { useState, useEffect } = React;
 const { jsPDF } = window.jspdf;
@@ -84,14 +127,13 @@ async function exportPDF(){
   pdf.save("customer-journey.pdf");
 }
 
-// SVG con línea más gruesa
 function JourneyChart({ data }){
   const n = data.length;
   const pts = data.map((d,i)=>({
     x: i+0.5,
     y: 4 - parseInt(d.sentiment,10)
   }));
-  const d = pts.map((p,i)=>(i?"L":"M")+`${p.x},${p.y}`).join("");
+  const pathD = pts.map((p,i)=>(i?"L":"M")+`${p.x},${p.y}`).join("");
   return (
     <svg viewBox={`0 0 ${n} 4`} preserveAspectRatio="none"
          className="absolute inset-0 w-full h-full pointer-events-none">
@@ -101,10 +143,9 @@ function JourneyChart({ data }){
               stroke="#E5E7EB" strokeOpacity="0.5"
               strokeWidth="0.04" vectorEffect="non-scaling-stroke"/>
       ))}
-      <path d={d}
+      <path d={pathD}
             fill="none"
             stroke="#E60000"
-            strokeOpacity="1"
             strokeWidth="0.15"
             vectorEffect="non-scaling-stroke"/>
     </svg>
@@ -112,16 +153,79 @@ function JourneyChart({ data }){
 }
 
 function JourneyWizard(){
-  const [step,setStep] = useState(0);
-  const [stages,setStages] = useState(fixedStages.map(s=>({...s,...initialData})));
-  useEffect(()=> document.getElementById("exportPDFBtn").onclick = exportPDF, [stages]);
-  const next = ()=>setStep(s=>Math.min(s+1,steps.length-1));
-  const back = ()=>setStep(s=>Math.max(s-1,0));
-  const upd = (i,f,v)=>{ const a=[...stages]; a[i][f]=v; setStages(a); };
-  const inc = stages.filter(s=>s.incluir && s.sentiment);
+  const [step, setStep]                   = useState(0);
+  const [stages, setStages]               = useState(fixedStages.map(s=>({...s,...initialData})));
+  const [userName, setUserName]           = useState("");
+  const [savedJourneys, setSavedJourneys] = useState([]);
+  const [selectedJourney, setSelectedJourney] = useState(null);
+
+  useEffect(()=>{
+    document.getElementById("exportPDFBtn").onclick = exportPDF;
+  }, [stages]);
+
+  useEffect(()=>{
+    if(!userName) return;
+    window.loadJourneys(userName).then(setSavedJourneys);
+  }, [userName]);
+
+  const next = ()=>setStep(s=>Math.min(s+1, steps.length-1));
+  const back = ()=>setStep(s=>Math.max(s-1, 0));
+  const upd  = (i,f,v)=>{ const a=[...stages]; a[i][f]=v; setStages(a); };
+  const inc  = stages.filter(s=>s.incluir && s.sentiment);
+
+  const load = (id)=>{
+    const j = savedJourneys.find(j=>j.id===id);
+    if(j){
+      setStages(j.stages);
+      setSelectedJourney(j.id);
+    }
+  };
+  const save = async ()=>{
+    if(!userName) return;
+    if(selectedJourney){
+      await window.updateJourney(selectedJourney, stages);
+    } else {
+      await window.saveJourney(userName, stages);
+    }
+    const fresh = await window.loadJourneys(userName);
+    setSavedJourneys(fresh);
+    setSelectedJourney(null);
+  };
 
   return (
     <div className="max-w-5xl mx-auto">
+      {/* Usuario & Journeys */}
+      <div className="p-4 mb-4 bg-white border rounded shadow-sm flex gap-2 items-center">
+        <input
+          type="text"
+          placeholder="Tu nombre"
+          value={userName}
+          onChange={e=>setUserName(e.target.value)}
+          className="border p-2 rounded flex-1"
+        />
+        <button
+          disabled={!userName}
+          onClick={()=>window.loadJourneys(userName).then(setSavedJourneys)}
+          className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
+        >
+          Cargar mis journeys
+        </button>
+        {savedJourneys.length > 0 && (
+          <select
+            value={selectedJourney||""}
+            onChange={e=>load(e.target.value)}
+            className="border p-2 rounded"
+          >
+            <option value="">Nuevo journey</option>
+            {savedJourneys.map(j=>(
+              <option key={j.id} value={j.id}>
+                {new Date(j.createdAt).toLocaleString()}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
       {/* Paso */}
       <div className="mb-4 text-gray-600">
         Paso {step+1} de {steps.length}: <span className="font-semibold">{steps[step]}</span>
@@ -133,12 +237,16 @@ function JourneyWizard(){
           <div className="flex justify-between mb-2">
             <h3 className="font-semibold">Etapa {i+1}: {st.nombre}</h3>
             <label className="flex items-center gap-2">
-              <input type="checkbox" checked={st.incluir} onChange={e=>upd(i,"incluir",e.target.checked)}/>Incluir
+              <input
+                type="checkbox"
+                checked={st.incluir}
+                onChange={e=>upd(i,"incluir",e.target.checked)}
+              />Incluir
             </label>
           </div>
           <p className="italic text-gray-500 mb-2">{st.descripcion}</p>
           {st.incluir && <>
-            {['meta','emocion','dolor','quote','oportunidades'].map(f=>(
+            {["meta","emocion","dolor","quote","oportunidades"].map(f=>(
               <div key={f} className="mb-2">
                 <label className="block text-sm mb-1">{{
                   meta:"Meta del cliente",
@@ -147,12 +255,20 @@ function JourneyWizard(){
                   quote:"Frase destacada",
                   oportunidades:"Oportunidades"
                 }[f]}</label>
-                <input className="w-full border p-2 rounded" value={st[f]} onChange={e=>upd(i,f,e.target.value)}/>
+                <input
+                  className="w-full border p-2 rounded"
+                  value={st[f]}
+                  onChange={e=>upd(i,f,e.target.value)}
+                />
               </div>
             ))}
             <div>
               <label className="block text-sm mb-1">Sentimiento</label>
-              <select className="w-full border p-2 rounded" value={st.sentiment} onChange={e=>upd(i,"sentiment",e.target.value)}>
+              <select
+                className="w-full border p-2 rounded"
+                value={st.sentiment}
+                onChange={e=>upd(i,"sentiment",e.target.value)}
+              >
                 <option value="">Seleccioná…</option>
                 <option value="1">😞 Malo</option>
                 <option value="2">😐 Neutral</option>
@@ -170,28 +286,31 @@ function JourneyWizard(){
           <table>
             <thead>
               <tr>
-                <th>Etapa</th><th>Meta</th><th>Emoción</th><th>Dolor</th><th>Quote</th><th>Oportunidades</th><th>Sentimiento</th>
+                <th>Etapa</th><th>Meta</th><th>Emoción</th>
+                <th>Dolor</th><th>Quote</th><th>Oportunidades</th><th>Sentimiento</th>
               </tr>
             </thead>
             <tbody>
               {inc.map((s,i)=>(
                 <tr key={i}>
-                  <td>{s.nombre}</td><td>{s.meta}</td><td>{s.emocion}</td><td>{s.dolor}</td><td>{s.quote}</td><td>{s.oportunidades}</td><td>{s.sentiment==="1"?"😞":s.sentiment==="2"?"😐":"😊"}</td>
+                  <td>{s.nombre}</td>
+                  <td>{s.meta}</td>
+                  <td>{s.emocion}</td>
+                  <td>{s.dolor}</td>
+                  <td>{s.quote}</td>
+                  <td>{s.oportunidades}</td>
+                  <td>{s.sentiment==="1"?"😞":s.sentiment==="2"?"😐":"😊"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        {/* Chart + Emociones + Oportunidades */}
+        {/* Chart + Leyenda + Oportunidades */}
         <div id="export-chart" className="grid grid-cols-[auto,1fr] grid-rows-[auto,1fr,auto] gap-x-4">
-          {/* Leyenda vertical (fila 2) */}
+          {/* Leyenda (fila 2) */}
           <div className="row-start-2 grid grid-rows-3 gap-y-6 h-[300px]">
-            {[
-              { e: "😊", c: "text-green-600" },
-              { e: "😐", c: "text-yellow-500" },
-              { e: "😞", c: "text-red-600" }
-            ].map((it,i)=>(
+            {[{e:"😊",c:"text-green-600"},{e:"😐",c:"text-yellow-500"},{e:"😞",c:"text-red-600"}].map((it,i)=>(
               <div key={i} className="flex items-center justify-center">
                 <span className="text-2xl">{it.e}</span>
                 <span className={`${it.c} ml-1 text-sm font-semibold transform -rotate-90`}>
@@ -202,41 +321,82 @@ function JourneyWizard(){
           </div>
 
           {/* Metas (fila 1, col 2) */}
-          <div className="col-start-2 row-start-1 grid gap-2 mb-4" style={{gridTemplateColumns:`repeat(${inc.length},minmax(0,1fr))`}}>
+          <div className="col-start-2 row-start-1 grid gap-2 mb-4"
+               style={{gridTemplateColumns:`repeat(${inc.length},minmax(0,1fr))`}}>
             {inc.map((s,i)=>(
-              <div key={i} className="bg-gray-700 text-white text-center rounded py-1 text-sm" title={s.meta}>{s.meta}</div>
+              <div key={i}
+                   className="bg-gray-700 text-white text-center rounded py-1 text-sm"
+                   title={s.meta}>
+                {s.meta}
+              </div>
             ))}
           </div>
 
           {/* Chart (fila 2, col 2) */}
           <div className="col-start-2 row-start-2 relative h-[300px]">
             <JourneyChart data={inc.map(s=>({ sentiment:s.sentiment }))}/>
-            <div className="grid grid-rows-3 gap-y-6" style={{gridTemplateColumns:`repeat(${inc.length},minmax(0,1fr))`,height:"100%",position:"relative",zIndex:1}}>
+            <div className="grid grid-rows-3 gap-y-6"
+                 style={{
+                   gridTemplateColumns:`repeat(${inc.length},minmax(0,1fr))`,
+                   height:"100%",
+                   position:"relative",
+                   zIndex:1
+                 }}>
               {inc.map((s,i)=>(
-                <div key={i} className="flex justify-center items-center">{s.sentiment==="3"&&<span className="text-4xl">😊</span>}</div>
+                <div key={i} className="flex justify-center items-center">
+                  {s.sentiment==="3" && <span className="text-4xl">😊</span>}
+                </div>
               ))}
               {inc.map((s,i)=>(
-                <div key={i} className="flex justify-center items-center">{s.sentiment==="2"&&<span className="text-4xl">😐</span>}</div>
+                <div key={i} className="flex justify-center items-center">
+                  {s.sentiment==="2" && <span className="text-4xl">😐</span>}
+                </div>
               ))}
               {inc.map((s,i)=>(
-                <div key={i} className="flex justify-center items-center">{s.sentiment==="1"&&<span className="text-4xl">😞</span>}</div>
+                <div key={i} className="flex justify-center items-center">
+                  {s.sentiment==="1" && <span className="text-4xl">😞</span>}
+                </div>
               ))}
             </div>
           </div>
 
           {/* Oportunidades (fila 3, col 2) */}
-          <div className="col-start-2 row-start-3 grid gap-2 mt-4" style={{gridTemplateColumns:`repeat(${inc.length},minmax(0,1fr))`}}>
+          <div className="col-start-2 row-start-3 grid gap-2 mt-4"
+               style={{gridTemplateColumns:`repeat(${inc.length},minmax(0,1fr))`}}>
             {inc.map((s,i)=>(
-              <div key={i} className={`break-words text-center text-sm font-medium ${s.sentiment==="3"?"text-green-600":s.sentiment==="2"?"text-yellow-500":"text-red-600"}`}>{s.oportunidades}</div>
+              <div key={i}
+                   className={`break-words text-center text-sm font-medium ${
+                     s.sentiment==="3"?"text-green-600":
+                     s.sentiment==="2"?"text-yellow-500":
+                     "text-red-600"
+                   }`}>
+                {s.oportunidades}
+              </div>
             ))}
           </div>
+        </div>
+
+        {/* Botón Guardar */}
+        <div className="flex justify-end mt-4">
+          <button
+            onClick={save}
+            className="px-4 py-2 bg-green-600 text-white rounded"
+          >
+            {selectedJourney ? "Actualizar journey" : "Guardar journey"}
+          </button>
         </div>
       </>}
 
       {/* Navegación */}
       <div className="mt-6 flex justify-between">
-        <button onClick={back} disabled={step===0} className="px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded disabled:opacity-50">Atrás</button>
-        <button onClick={next} disabled={step===steps.length-1} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded disabled:opacity-50">Siguiente</button>
+        <button onClick={back} disabled={step===0}
+                className="px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded disabled:opacity-50">
+          Atrás
+        </button>
+        <button onClick={next} disabled={step===steps.length-1}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded disabled:opacity-50">
+          Siguiente
+        </button>
       </div>
     </div>
   );
@@ -244,5 +404,6 @@ function JourneyWizard(){
 
 ReactDOM.createRoot(document.getElementById("root")).render(<JourneyWizard/>);
 </script>
+
 </body>
 </html>
