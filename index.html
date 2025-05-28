@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Customer Journey Builder – Andreani</title>
+  <!-- TailwindCSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React 18 -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <!-- html2canvas + jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- Babel para JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* Tabla sin scroll y 100% ancho */
+    #export-table { overflow: visible !important; }
+    #export-table table {
+      width:100%; table-layout:fixed; border-collapse:collapse;
+    }
+    #export-table th, #export-table td {
+      border:1px solid #E5E7EB; padding:.5rem; word-break:break-word;
+    }
+    #export-table thead th {
+      background:#374151; color:#FFF;
+    }
+    #export-table thead th:first-child { border-top-left-radius:.25rem }
+    #export-table thead th:last-child  { border-top-right-radius:.25rem }
+  </style>
+</head>
+<body class="bg-gray-100 font-sans">
+
+<header class="flex items-center justify-between bg-white border-b px-6 py-4 shadow-sm">
+  <h1 class="text-2xl font-bold text-red-600">Customer Journey Builder</h1>
+  <button id="exportPDFBtn" class="border border-red-600 text-red-600 px-4 py-2 rounded hover:bg-red-50">
+    Exportar PDF
+  </button>
+</header>
+
+<main class="p-6">
+  <div id="root"></div>
+</main>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+const { jsPDF } = window.jspdf;
+
+const steps = ["Completar etapas","Resumen"];
+const fixedStages = [
+  { nombre:"Descubrimiento / Investigación",    descripcion:"El cliente identifica una necesidad y comienza a buscar información sobre posibles soluciones." },
+  { nombre:"Contacto / Consulta inicial",       descripcion:"Primera interacción con la empresa: formulario, llamada, visita o chat." },
+  { nombre:"Evaluación / Cotización",           descripcion:"El cliente compara opciones y solicita precios o detalles del servicio." },
+  { nombre:"Contratación / Registro",           descripcion:"El cliente avanza, completa el registro y firma contratos." },
+  { nombre:"Onboarding / Inicio del servicio",  descripcion:"Bienvenida, capacitaciones, accesos y configuración inicial." },
+  { nombre:"Uso / Experiencia activa",          descripcion:"El cliente utiliza el servicio en su día a día." },
+  { nombre:"Soporte / Atención al cliente",     descripcion:"El cliente contacta soporte para resolver incidencias o reclamos." },
+  { nombre:"Renovación / Revisión",             descripcion:"Evaluación de continuidad: renovaciones, upgrades o cambios de plan." },
+  { nombre:"Baja / Post-servicio",              descripcion:"Finalización del servicio: encuestas, cancelación y fidelización." }
+];
+const initialData = { incluir:false, sentiment:"", meta:"", emocion:"", dolor:"", quote:"", oportunidades:"" };
+
+async function capture(id){
+  const el = document.getElementById(id);
+  const prev = el.style.overflow; el.style.overflow="visible";
+  const canvas = await html2canvas(el,{scale:2});
+  el.style.overflow = prev;
+  return canvas.toDataURL("image/png");
+}
+async function exportPDF(){
+  const pdf = new jsPDF({ orientation:'landscape', unit:'pt', format:'a4' });
+  const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight();
+  async function add(id,newPage=false){
+    const url = await capture(id), img=new Image();
+    img.src = url; await new Promise(r=>img.onload=r);
+    const {width:iW,height:iH} = img;
+    const scale = Math.min(W/iW, H/iH);
+    if(newPage) pdf.addPage();
+    pdf.addImage(url,'PNG',0,0,iW*scale,iH*scale);
+  }
+  await add("export-table",false);
+  await add("export-chart",true);
+  pdf.save("customer-journey.pdf");
+}
+
+// SVG con línea más gruesa
+function JourneyChart({ data }){
+  const n = data.length;
+  const pts = data.map((d,i)=>({
+    x: i+0.5,
+    y: 4 - parseInt(d.sentiment,10)
+  }));
+  const d = pts.map((p,i)=>(i?"L":"M")+`${p.x},${p.y}`).join("");
+  return (
+    <svg viewBox={`0 0 ${n} 4`} preserveAspectRatio="none"
+         className="absolute inset-0 w-full h-full pointer-events-none">
+      {[1,2,3].map(v=>(
+        <line key={v}
+              x1={0} y1={v} x2={n} y2={v}
+              stroke="#E5E7EB" strokeOpacity="0.5"
+              strokeWidth="0.04" vectorEffect="non-scaling-stroke"/>
+      ))}
+      <path d={d}
+            fill="none"
+            stroke="#E60000"
+            strokeOpacity="1"
+            strokeWidth="0.15"
+            vectorEffect="non-scaling-stroke"/>
+    </svg>
+  );
+}
+
+function JourneyWizard(){
+  const [step,setStep] = useState(0);
+  const [stages,setStages] = useState(fixedStages.map(s=>({...s,...initialData})));
+  useEffect(()=> document.getElementById("exportPDFBtn").onclick = exportPDF, [stages]);
+  const next = ()=>setStep(s=>Math.min(s+1,steps.length-1));
+  const back = ()=>setStep(s=>Math.max(s-1,0));
+  const upd = (i,f,v)=>{ const a=[...stages]; a[i][f]=v; setStages(a); };
+  const inc = stages.filter(s=>s.incluir && s.sentiment);
+
+  return (
+    <div className="max-w-5xl mx-auto">
+      {/* Paso */}
+      <div className="mb-4 text-gray-600">
+        Paso {step+1} de {steps.length}: <span className="font-semibold">{steps[step]}</span>
+      </div>
+
+      {/* Formulario */}
+      {step===0 && stages.map((st,i)=>(
+        <div key={i} className="p-4 mb-4 bg-white border rounded shadow-sm">
+          <div className="flex justify-between mb-2">
+            <h3 className="font-semibold">Etapa {i+1}: {st.nombre}</h3>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={st.incluir} onChange={e=>upd(i,"incluir",e.target.checked)}/>Incluir
+            </label>
+          </div>
+          <p className="italic text-gray-500 mb-2">{st.descripcion}</p>
+          {st.incluir && <>
+            {['meta','emocion','dolor','quote','oportunidades'].map(f=>(
+              <div key={f} className="mb-2">
+                <label className="block text-sm mb-1">{{
+                  meta:"Meta del cliente",
+                  emocion:"Emoción del cliente",
+                  dolor:"Dolor principal",
+                  quote:"Frase destacada",
+                  oportunidades:"Oportunidades"
+                }[f]}</label>
+                <input className="w-full border p-2 rounded" value={st[f]} onChange={e=>upd(i,f,e.target.value)}/>
+              </div>
+            ))}
+            <div>
+              <label className="block text-sm mb-1">Sentimiento</label>
+              <select className="w-full border p-2 rounded" value={st.sentiment} onChange={e=>upd(i,"sentiment",e.target.value)}>
+                <option value="">Seleccioná…</option>
+                <option value="1">😞 Malo</option>
+                <option value="2">😐 Neutral</option>
+                <option value="3">😊 Bueno</option>
+              </select>
+            </div>
+          </>}
+        </div>
+      ))}
+
+      {/* Resumen */}
+      {step===1 && <>
+        {/* Tabla */}
+        <div id="export-table" className="bg-white rounded shadow mb-6">
+          <table>
+            <thead>
+              <tr>
+                <th>Etapa</th><th>Meta</th><th>Emoción</th><th>Dolor</th><th>Quote</th><th>Oportunidades</th><th>Sentimiento</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inc.map((s,i)=>(
+                <tr key={i}>
+                  <td>{s.nombre}</td><td>{s.meta}</td><td>{s.emocion}</td><td>{s.dolor}</td><td>{s.quote}</td><td>{s.oportunidades}</td><td>{s.sentiment==="1"?"😞":s.sentiment==="2"?"😐":"😊"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Chart + Emociones + Oportunidades */}
+        <div id="export-chart" className="grid grid-cols-[auto,1fr] grid-rows-[auto,1fr,auto] gap-x-4">
+          {/* Leyenda vertical (fila 2) */}
+          <div className="row-start-2 grid grid-rows-3 gap-y-6 h-[300px]">
+            {[
+              { e: "😊", c: "text-green-600" },
+              { e: "😐", c: "text-yellow-500" },
+              { e: "😞", c: "text-red-600" }
+            ].map((it,i)=>(
+              <div key={i} className="flex items-center justify-center">
+                <span className="text-2xl">{it.e}</span>
+                <span className={`${it.c} ml-1 text-sm font-semibold transform -rotate-90`}>
+                  {it.e==="😊"?"Bueno":it.e==="😐"?"Neutral":"Malo"}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Metas (fila 1, col 2) */}
+          <div className="col-start-2 row-start-1 grid gap-2 mb-4" style={{gridTemplateColumns:`repeat(${inc.length},minmax(0,1fr))`}}>
+            {inc.map((s,i)=>(
+              <div key={i} className="bg-gray-700 text-white text-center rounded py-1 text-sm" title={s.meta}>{s.meta}</div>
+            ))}
+          </div>
+
+          {/* Chart (fila 2, col 2) */}
+          <div className="col-start-2 row-start-2 relative h-[300px]">
+            <JourneyChart data={inc.map(s=>({ sentiment:s.sentiment }))}/>
+            <div className="grid grid-rows-3 gap-y-6" style={{gridTemplateColumns:`repeat(${inc.length},minmax(0,1fr))`,height:"100%",position:"relative",zIndex:1}}>
+              {inc.map((s,i)=>(
+                <div key={i} className="flex justify-center items-center">{s.sentiment==="3"&&<span className="text-4xl">😊</span>}</div>
+              ))}
+              {inc.map((s,i)=>(
+                <div key={i} className="flex justify-center items-center">{s.sentiment==="2"&&<span className="text-4xl">😐</span>}</div>
+              ))}
+              {inc.map((s,i)=>(
+                <div key={i} className="flex justify-center items-center">{s.sentiment==="1"&&<span className="text-4xl">😞</span>}</div>
+              ))}
+            </div>
+          </div>
+
+          {/* Oportunidades (fila 3, col 2) */}
+          <div className="col-start-2 row-start-3 grid gap-2 mt-4" style={{gridTemplateColumns:`repeat(${inc.length},minmax(0,1fr))`}}>
+            {inc.map((s,i)=>(
+              <div key={i} className={`break-words text-center text-sm font-medium ${s.sentiment==="3"?"text-green-600":s.sentiment==="2"?"text-yellow-500":"text-red-600"}`}>{s.oportunidades}</div>
+            ))}
+          </div>
+        </div>
+      </>}
+
+      {/* Navegación */}
+      <div className="mt-6 flex justify-between">
+        <button onClick={back} disabled={step===0} className="px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded disabled:opacity-50">Atrás</button>
+        <button onClick={next} disabled={step===steps.length-1} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded disabled:opacity-50">Siguiente</button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<JourneyWizard/>);
+</script>
+</body>
+</html>
