@@ -43,49 +43,6 @@
   <div id="root"></div>
 </main>
 
-<!-- Firebase SDK (modular) -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
-  import {
-    getFirestore, collection, addDoc, getDocs,
-    doc, setDoc, query, where
-  } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
-  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
-
-  // Configuración Firebase (Spark)
-  const firebaseConfig = {
-    apiKey: "AIzaSyCWIbixEc3WRgZjbd5v3u-gQiwGC-QR-Yo",
-    authDomain: "customer-journey-builder-2583d.firebaseapp.com",
-    projectId: "customer-journey-builder-2583d",
-    storageBucket: "customer-journey-builder-2583d.firebasestorage.app",
-    messagingSenderId: "765018924860",
-    appId: "1:765018924860:web:ca0c1dcf8510538a706039",
-    measurementId: "G-ZMG2BEZXF3"
-  };
-
-  // Inicializar Firebase, Auth anónimo y Firestore
-  const app  = initializeApp(firebaseConfig);
-  const auth = getAuth(app);
-  signInAnonymously(auth);
-  const db   = getFirestore(app);
-
-  // Helpers globales para guardar, cargar y actualizar journeys
-  window.saveJourney = async (user, stages) => {
-    await addDoc(collection(db, "journeys"), {
-      user,
-      createdAt: Date.now(),
-      stages
-    });
-  };
-  window.loadJourneys = async (user) => {
-    const snap = await getDocs(query(collection(db, "journeys"), where("user", "==", user)));
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  };
-  window.updateJourney = async (id, stages) => {
-    await setDoc(doc(db, "journeys", id), { stages }, { merge: true });
-  };
-</script>
-
 <script type="text/babel">
 const { useState, useEffect } = React;
 const { jsPDF } = window.jspdf;
@@ -153,79 +110,17 @@ function JourneyChart({ data }){
 }
 
 function JourneyWizard(){
-  const [step, setStep]                   = useState(0);
-  const [stages, setStages]               = useState(fixedStages.map(s=>({...s,...initialData})));
-  const [userName, setUserName]           = useState("");
-  const [savedJourneys, setSavedJourneys] = useState([]);
-  const [selectedJourney, setSelectedJourney] = useState(null);
+  const [step, setStep]     = useState(0);
+  const [stages, setStages] = useState(fixedStages.map(s=>({...s,...initialData})));
+  useEffect(()=> document.getElementById("exportPDFBtn").onclick = exportPDF, [stages]);
 
-  useEffect(()=>{
-    document.getElementById("exportPDFBtn").onclick = exportPDF;
-  }, [stages]);
-
-  useEffect(()=>{
-    if(!userName) return;
-    window.loadJourneys(userName).then(setSavedJourneys);
-  }, [userName]);
-
-  const next = ()=>setStep(s=>Math.min(s+1, steps.length-1));
-  const back = ()=>setStep(s=>Math.max(s-1, 0));
-  const upd  = (i,f,v)=>{ const a=[...stages]; a[i][f]=v; setStages(a); };
+  const next = ()=> setStep(s=>Math.min(s+1, steps.length-1));
+  const back = ()=> setStep(s=>Math.max(s-1, 0));
+  const upd  = (i,f,v)=>{ const copy = [...stages]; copy[i][f] = v; setStages(copy); };
   const inc  = stages.filter(s=>s.incluir && s.sentiment);
-
-  const load = (id)=>{
-    const j = savedJourneys.find(j=>j.id===id);
-    if(j){
-      setStages(j.stages);
-      setSelectedJourney(j.id);
-    }
-  };
-  const save = async ()=>{
-    if(!userName) return;
-    if(selectedJourney){
-      await window.updateJourney(selectedJourney, stages);
-    } else {
-      await window.saveJourney(userName, stages);
-    }
-    const fresh = await window.loadJourneys(userName);
-    setSavedJourneys(fresh);
-    setSelectedJourney(null);
-  };
 
   return (
     <div className="max-w-5xl mx-auto">
-      {/* Usuario & Journeys */}
-      <div className="p-4 mb-4 bg-white border rounded shadow-sm flex gap-2 items-center">
-        <input
-          type="text"
-          placeholder="Tu nombre"
-          value={userName}
-          onChange={e=>setUserName(e.target.value)}
-          className="border p-2 rounded flex-1"
-        />
-        <button
-          disabled={!userName}
-          onClick={()=>window.loadJourneys(userName).then(setSavedJourneys)}
-          className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
-        >
-          Cargar mis journeys
-        </button>
-        {savedJourneys.length > 0 && (
-          <select
-            value={selectedJourney||""}
-            onChange={e=>load(e.target.value)}
-            className="border p-2 rounded"
-          >
-            <option value="">Nuevo journey</option>
-            {savedJourneys.map(j=>(
-              <option key={j.id} value={j.id}>
-                {new Date(j.createdAt).toLocaleString()}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-
       {/* Paso */}
       <div className="mb-4 text-gray-600">
         Paso {step+1} de {steps.length}: <span className="font-semibold">{steps[step]}</span>
@@ -248,13 +143,15 @@ function JourneyWizard(){
           {st.incluir && <>
             {["meta","emocion","dolor","quote","oportunidades"].map(f=>(
               <div key={f} className="mb-2">
-                <label className="block text-sm mb-1">{{
-                  meta:"Meta del cliente",
-                  emocion:"Emoción del cliente",
-                  dolor:"Dolor principal",
-                  quote:"Frase destacada",
-                  oportunidades:"Oportunidades"
-                }[f]}</label>
+                <label className="block text-sm mb-1">
+                  {{
+                    meta:"Meta del cliente",
+                    emocion:"Emoción del cliente",
+                    dolor:"Dolor principal",
+                    quote:"Frase destacada",
+                    oportunidades:"Oportunidades"
+                  }[f]}
+                </label>
                 <input
                   className="w-full border p-2 rounded"
                   value={st[f]}
@@ -374,16 +271,6 @@ function JourneyWizard(){
               </div>
             ))}
           </div>
-        </div>
-
-        {/* Botón Guardar */}
-        <div className="flex justify-end mt-4">
-          <button
-            onClick={save}
-            className="px-4 py-2 bg-green-600 text-white rounded"
-          >
-            {selectedJourney ? "Actualizar journey" : "Guardar journey"}
-          </button>
         </div>
       </>}
 
